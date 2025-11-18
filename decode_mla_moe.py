@@ -285,17 +285,18 @@ def decode_mla_roofline(seq_len, batch, tp, ep, args: ModelArgs, gpu: GPU_perf,
     _, gemm_flops, attn_fp16_flops = mla_matabsob_flops(1, seq_len, args, 1)
     gemm_flops *= batch
     attn_fp16_flops *= batch
-    # Compute time
-    gemm_fp8_t = gemm_flops / gpu.get_fp8_flops()
-    attn_fp16_t = attn_fp16_flops / gpu.get_fp16_flops()
+    # Compute time (in milliseconds)
+    # GFLOPS / TFLOPS = GFLOPS / (1000 GFLOPS/s) = 1/1000 s = ms
+    gemm_fp8_t = gemm_flops / gpu.get_fp8_flops()  # ms
+    attn_fp16_t = attn_fp16_flops / gpu.get_fp16_flops()  # ms
 
-    # Load weight time
+    # Load weight time (in milliseconds)
     mem_weight = mla_weight_mem_mb(args)
-    load_weight_t = mem_weight / 1024 / gpu.get_mem_bw()
+    load_weight_t = mem_weight / 1024 / gpu.get_mem_bw() * 1000  # ms
  
-    # Load KV cache time
+    # Load KV cache time (in milliseconds)
     mem_KV = mla_KVCache_mem_mb(args, batch, seq_len)
-    load_kv_time = mem_KV / 1024 / gpu.get_mem_bw() * 1000
+    load_kv_time = mem_KV / 1024 / gpu.get_mem_bw() * 1000  # ms
 
     # print('seq_len: ', seq_len,  ', ai:' , attn_fp16_flops * 1e9 / mla_KVCache_mem_mb(args, batch, seq_len) / 1024)
     # print('GB200:',2500*1e12/8000/1e9)
@@ -312,7 +313,7 @@ def decode_mla_roofline(seq_len, batch, tp, ep, args: ModelArgs, gpu: GPU_perf,
 
     # FP4 optimization
     if enable_gemm_fp4 and gpu.get_fp4_flops() > 0:
-        gemm_fp4_t = gemm_flops / gpu.get_fp4_flops()
+        gemm_fp4_t = gemm_flops / gpu.get_fp4_flops()  # ms
         total_compute = max(gemm_fp4_t, load_weight_t) + attn_fp16_t
 
     # AllReduce communication
@@ -381,9 +382,9 @@ def decode_moe_roofline(seq_len, batch, tp, ep, args: ModelArgs, gpu: GPU_perf,
     device_num = ep
     gemm_group_per_device = math.ceil(args.n_routed_experts / device_num)
 
-    # Memory loading overhead
+    # Memory loading overhead (in milliseconds)
     mem_moe = moe_expert_mem(args)
-    load_time = mem_moe / 1024 / gpu.get_mem_bw()
+    load_time = mem_moe / 1024 / gpu.get_mem_bw() * 1000  # ms
     if enable_fp4 and gpu.get_fp4_flops() > 0:
         load_time = load_time / 2
 
@@ -414,15 +415,15 @@ def decode_moe_roofline(seq_len, batch, tp, ep, args: ModelArgs, gpu: GPU_perf,
     discount_factor = flops_discounts[n_pow2_range(int(m_per_group))]
     gpu_flops_effective = gpu_flops * discount_factor
 
-    # Shared expert computation (per micro-batch)
+    # Shared expert computation (per micro-batch, in milliseconds)
     shared_flops = moe_expert_flops(args, batch / mbs)
-    shared_time_per_mbs = shared_flops / gpu_flops_effective + load_time
+    shared_time_per_mbs = shared_flops / gpu_flops_effective + load_time  # ms
     shared_time = shared_time_per_mbs * mbs
 
-    # Routed expert computation (per micro-batch)
+    # Routed expert computation (per micro-batch, in milliseconds)
     num_routed_token_per_mbs = (batch / mbs) * args.n_activated_experts
     routed_flops = moe_expert_flops(args, num_routed_token_per_mbs)
-    routed_time_per_mbs = routed_flops / gpu_flops_effective + load_time * gemm_group_per_device
+    routed_time_per_mbs = routed_flops / gpu_flops_effective + load_time * gemm_group_per_device  # ms
     routed_time = routed_time_per_mbs * mbs
 
     return {
